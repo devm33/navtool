@@ -194,4 +194,26 @@ class ZipExtractor {
     
     return listing;
   }
+
+  /// Extract first S-57 file found (alternative extraction method)
+  static Future<List<int>?> extractFirstS57File(List<int> zipBytes) async {
+    try {
+      final archive = ZipDecoder().decodeBytes(zipBytes);
+      return _findAnyS57File(archive);
+    } catch (e) {
+      print('[ZipExtractor] ERROR in extractFirstS57File: $e');
+      return null;
+    }
+  }
+
+  /// Extract file from specific path (alternative extraction method)
+  static Future<List<int>?> extractFromPath(List<int> zipBytes, String path) async {
+    try {
+      final archive = ZipDecoder().decodeBytes(zipBytes);
+      return _findFileByName(archive, path);
+    } catch (e) {
+      print('[ZipExtractor] ERROR in extractFromPath: $e');
+      return null;
+    }
+  }
 }
