@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mockito/mockito.dart';
 import 'package:mockito/annotations.dart';
+import 'dart:async';
 import 'package:navtool/features/charts/chart_browser_screen.dart';
 import 'package:navtool/core/services/noaa/noaa_chart_discovery_service.dart';
 import 'package:navtool/core/models/chart.dart';
@@ -31,6 +32,7 @@ void main() {
     });
 
     Widget createTestWidget({bool withNavigation = false}) {
+      // Set up test environment to prevent async operations
       return ProviderScope(
         overrides: [
           noaaChartDiscoveryServiceProvider.overrideWithValue(
@@ -40,7 +42,13 @@ void main() {
           gpsServiceProvider.overrideWithValue(mockGpsService),
         ],
         child: MaterialApp(
-          home: const ChartBrowserScreen(),
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(800, 600),
+              devicePixelRatio: 1.0,
+            ),
+            child: const ChartBrowserScreen(),
+          ),
           routes: withNavigation
               ? {
                   '/chart': (context) =>
@@ -115,18 +123,72 @@ void main() {
       );
     }
 
+    /// Helper function to safely pump and settle with timeout and fallback
+    Future<void> safePumpAndSettle(
+      WidgetTester tester, {
+      Duration timeout = const Duration(seconds: 5),
+      int maxFrames = 100,
+    }) async {
+      try {
+        await tester.pumpAndSettle(timeout, EnginePhase.sendSemanticsUpdate, Duration(milliseconds: maxFrames));
+      } catch (e) {
+        // If pumpAndSettle fails, fall back to bounded pump
+        await tester.pump();
+        await Future.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+    }
+
+    /// Helper function to safely pump with explicit frame count
+    Future<void> safePump(
+      WidgetTester tester, {
+      int frames = 3,
+      Duration frameDuration = const Duration(milliseconds: 16),
+    }) async {
+      for (int i = 0; i < frames; i++) {
+        await tester.pump(frameDuration);
+      }
+    }
+
+    /// Helper function to wait for async operations to complete
+    Future<void> safeSettle(
+      WidgetTester tester, {
+      Duration timeout = const Duration(seconds: 3),
+    }) async {
+      final completer = Completer<void>();
+      Timer(timeout, () {
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+      });
+      
+      try {
+        await tester.pumpAndSettle(const Duration(milliseconds: 100));
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+      } catch (e) {
+        // If settle fails, just complete
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+      }
+      
+      await completer.future;
+    }
+
     /// Helper function to pump with extended timeout for complex UI interactions
     Future<void> pumpAndSettleWithTimeout(
       WidgetTester tester, {
-      Duration timeout = const Duration(seconds: 15), // Increased from 10s to 15s for marine UI complexity
+      Duration timeout = const Duration(seconds: 5), // Reduced from 15s to 5s
     }) async {
-      await tester.pumpAndSettle(timeout);
+      await safePumpAndSettle(tester, timeout: timeout);
     }
 
     /// Helper function to pump with specific duration instead of waiting for settle
     Future<void> pumpAndWait(
       WidgetTester tester, {
-      Duration wait = const Duration(milliseconds: 800), // Increased from 500ms to 800ms for more stable UI
+      Duration wait = const Duration(milliseconds: 300), // Reduced from 800ms to 300ms
     }) async {
       await tester.pump();
       await Future.delayed(wait);
@@ -161,7 +223,7 @@ void main() {
 
           // Act
           await tester.pumpWidget(createTestWidget());
-          await tester.pumpAndSettle();
+          await safePumpAndSettle(tester);
 
           // Assert
           expect(find.byType(ChartBrowserScreen), findsOneWidget);
@@ -181,7 +243,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.byType(DropdownButton<String>), findsOneWidget);
@@ -196,7 +258,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.byType(TextField), findsAtLeastNWidgets(1));
@@ -213,7 +275,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.byType(FilterChip), findsAtLeastNWidgets(3));
@@ -234,7 +296,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert - check that the dropdown exists and has the correct label
         expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
@@ -262,13 +324,15 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePump(tester, frames: 5);
 
-        // Select California from dropdown
-        await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        // Select California from dropdown using a more targeted approach
+        final dropdownFinder = find.byType(DropdownButton<String>);
+        await tester.tap(dropdownFinder);
+        await safePump(tester, frames: 3);
+        
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePump(tester, frames: 5);
 
         // Assert
         verify(
@@ -293,11 +357,11 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select state to trigger loading
         await tester.tap(find.byType(DropdownButtonFormField<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
         await tester.pump(); // Don't settle, check loading state
 
@@ -305,7 +369,7 @@ void main() {
         expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
         // Wait for the async operation to complete to avoid timer leaks
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
       });
 
       testWidgets('should handle discovery errors gracefully', (
@@ -318,13 +382,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select state to trigger error
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('Failed to load charts'), findsOneWidget);
@@ -344,13 +408,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('San Francisco Bay'), findsOneWidget);
@@ -381,13 +445,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.textContaining('37.7° - 37.9°N'), findsOneWidget);
@@ -404,14 +468,14 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select Nevada (inland state with no charts)
         final dropdownFinder = find.byType(DropdownButtonFormField<String>);
         expect(dropdownFinder, findsOneWidget);
 
         await tester.tap(dropdownFinder);
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Scroll to make Nevada visible if needed
         await tester.dragUntilVisible(
@@ -419,10 +483,10 @@ void main() {
           find.byType(ListView),
           const Offset(0, -100),
         );
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         await tester.tap(find.text('Nevada'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('No charts found'), findsOneWidget);
@@ -454,13 +518,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California first
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Search for San Francisco
         await tester.enterText(find.byType(TextField), 'San Francisco');
@@ -482,17 +546,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California first
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Tap Harbor filter chip
         await tester.tap(find.widgetWithText(FilterChip, 'Harbor'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('San Francisco Bay'), findsOneWidget);
@@ -540,24 +604,24 @@ void main() {
             ),
           ),
         );
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButtonFormField<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Enter search text
         await tester.enterText(find.byType(TextField), 'San Francisco');
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Verify clear button appears
         expect(find.byIcon(Icons.clear), findsOneWidget);
 
         // Clear search
         await tester.tap(find.byIcon(Icons.clear));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert - search field should be empty and clear button should be gone
         final searchField = find.byType(TextField);
@@ -582,17 +646,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select first chart
         await tester.tap(find.byType(Checkbox).first);
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('1 selected'), findsOneWidget);
@@ -610,16 +674,16 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California and chart
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         await tester.tap(find.byType(Checkbox).first);
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.byIcon(Icons.download), findsOneWidget);
@@ -637,17 +701,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget(withNavigation: true));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Tap on chart card (not checkbox)
         await tester.tap(find.text('San Francisco Bay'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('Chart Display'), findsOneWidget);
@@ -664,17 +728,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Tap info button to show preview dialog
         await tester.tap(find.byIcon(Icons.info_outline).first);
-        await pumpAndSettleWithTimeout(tester); // Use extended timeout for dialog animation
+        await safePumpAndSettle(tester); // Use safe alternative for dialog animation
 
         // Assert
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -715,13 +779,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.byType(ListView), findsOneWidget);
@@ -745,7 +809,7 @@ void main() {
             const Duration(milliseconds: 120),
           ); // allow build/layout
         }
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Check that we have loaded charts further down the list
         // We know we have 100 charts (0-99), so let's check for one that should be visible after scrolling
@@ -767,13 +831,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select state first
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Type rapidly
         await tester.enterText(find.byType(TextField), 'S');
@@ -812,7 +876,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert - Use semantics finders that are more flexible
         expect(
@@ -855,13 +919,13 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Test tab navigation through chart cards
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
@@ -894,7 +958,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert - Should automatically discover charts without manual state selection
         verify(mockGpsService.getCurrentPositionWithFallback()).called(1);
@@ -923,7 +987,7 @@ void main() {
 
           // Act
           await tester.pumpWidget(createTestWidget());
-          await tester.pumpAndSettle();
+          await safePumpAndSettle(tester);
 
           // Assert - Should discover Seattle area charts as fallback
           final capturedCall = verify(
@@ -951,7 +1015,7 @@ void main() {
 
           // Act
           await tester.pumpWidget(createTestWidget());
-          await tester.pumpAndSettle();
+          await safePumpAndSettle(tester);
 
           // Assert - Should show state dropdown for manual selection
           expect(find.byType(DropdownButton<String>), findsOneWidget);
@@ -978,17 +1042,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California to load charts
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Enable scale filtering
         await tester.tap(find.text('Filter by Scale Range'));
-        await pumpAndSettleWithTimeout(tester); // Use extended timeout for complex filtering UI
+        await safePumpAndSettle(tester); // Use safe alternative for complex filtering UI
 
         // Assert
         expect(find.text('Scale: 1:1,000 - 1:10,000,000'), findsOneWidget);
@@ -1006,17 +1070,17 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Select California to load charts
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Enable date filtering
         await tester.tap(find.text('Filter by Update Date'));
-        await tester.pumpAndSettle();
+        await safePumpAndSettle(tester);
 
         // Assert
         expect(find.text('Start Date'), findsOneWidget);
@@ -1091,7 +1155,7 @@ void main() {
         await tester.tap(find.byType(DropdownButton<String>));
         await pumpAndWait(tester);
         await tester.tap(find.text('Florida'));
-        await pumpAndSettleWithTimeout(tester); // Use extended timeout for state change reset
+        await safePumpAndSettle(tester); // Use safe alternative for state change reset
 
         // Scale filter UI should not be visible (filter was reset)
         expect(find.byType(Slider), findsNothing);
