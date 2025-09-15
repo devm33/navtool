@@ -10,6 +10,7 @@ import 'package:navtool/core/services/compression_service_impl.dart';
 import 'package:navtool/core/logging/app_logger.dart';
 import 'package:navtool/core/models/compression_result.dart';
 import 'package:navtool/core/error/app_error.dart';
+import 'package:path/path.dart' as path;
 import 'test_logger.dart';
 
 /// Adapter to make TestLogger compatible with AppLogger interface
@@ -54,17 +55,25 @@ class _TestLoggerAdapter implements AppLogger {
 /// and regression testing for real NOAA ENC files.
 class EncTestUtilities {
   static const String _defaultFixturesEnvVar = 'NOAA_ENC_FIXTURES';
-  static const String _defaultFixturesPath = 'test/fixtures/charts/noaa_enc';
+  
+  // Standardized S57 fixture path (proper ENC directory structure)
+  static const String _defaultFixturesPath = 'test/fixtures/charts/s57_data/ENC_ROOT';
+  
+  // Legacy ZIP fixture path (for backward compatibility)
+  static const String _legacyZipPath = 'test/fixtures/charts/noaa_enc';
+  
   static const String _goldenSnapshotsPath = 'test/fixtures/golden';
   static const String _allowSnapshotGenEnvVar = 'ALLOW_SNAPSHOT_GEN';
 
   /// Primary test chart (Harbor usage band 5)
   static const String primaryChartId = 'US5WA50M';
-  static const String primaryChartFile = 'US5WA50M_harbor_elliott_bay.zip';
+  static const String primaryChartFile = 'US5WA50M.000'; // S57 format
+  static const String primaryChartFileZip = 'US5WA50M_harbor_elliott_bay.zip'; // Legacy ZIP
 
   /// Secondary test chart (Coastal usage band 3)
   static const String secondaryChartId = 'US3WA01M';
-  static const String secondaryChartFile = 'US3WA01M_coastal_puget_sound.zip';
+  static const String secondaryChartFile = 'US3WA01M.000'; // S57 format
+  static const String secondaryChartFileZip = 'US3WA01M_coastal_puget_sound.zip'; // Legacy ZIP
 
   final CompressionService _compressionService;
 
@@ -73,28 +82,74 @@ class EncTestUtilities {
           compressionService ??
           CompressionServiceImpl(logger: _TestLoggerAdapter());
 
-  /// Discover NOAA ENC fixture files
+  /// Discover NOAA ENC fixture files (S57 format preferred)
   static FixtureDiscoveryResult discoverFixtures() {
     final fixturesPath =
         Platform.environment[_defaultFixturesEnvVar] ?? _defaultFixturesPath;
     final fixturesDir = Directory(fixturesPath);
 
     if (!fixturesDir.existsSync()) {
-      return FixtureDiscoveryResult.notFound(fixturesPath);
+      // Fall back to legacy ZIP fixtures
+      return discoverZipFixtures();
     }
 
-    final primaryFile = File('$fixturesPath/$primaryChartFile');
-    final secondaryFile = File('$fixturesPath/$secondaryChartFile');
+    final s57Files = <String>[];
+    final encDirectories = <String>[];
+    
+    // Look for S57 chart directories (US5WA50M, US3WA01M, etc.)
+    for (final entity in fixturesDir.listSync()) {
+      if (entity is Directory) {
+        final chartId = entity.uri.pathSegments.last;
+        final s57File = File(path.join(entity.path, '$chartId.000'));
+        if (s57File.existsSync()) {
+          s57Files.add(s57File.path);
+          encDirectories.add(entity.path);
+        }
+      }
+    }
+
+    return FixtureDiscoveryResult.s57(
+      foundFixtures: s57Files.isNotEmpty,
+      fixtureFiles: s57Files,
+      encDirectories: encDirectories,
+      fixturePath: fixturesPath,
+    );
+  }
+
+  /// Discover NOAA ENC fixture files (legacy ZIP format)
+  static FixtureDiscoveryResult discoverZipFixtures() {
+    final fixturesDir = Directory(_legacyZipPath);
+
+    if (!fixturesDir.existsSync()) {
+      return FixtureDiscoveryResult.notFound(_legacyZipPath);
+    }
+
+    final primaryFile = File('$_legacyZipPath/$primaryChartFileZip');
+    final secondaryFile = File('$_legacyZipPath/$secondaryChartFileZip');
 
     return FixtureDiscoveryResult(
-      fixturesPath: fixturesPath,
+      fixturesPath: _legacyZipPath,
       primaryChartAvailable: primaryFile.existsSync(),
       secondaryChartAvailable: secondaryFile.existsSync(),
       primaryChartPath: primaryFile.existsSync() ? primaryFile.path : null,
       secondaryChartPath: secondaryFile.existsSync()
           ? secondaryFile.path
           : null,
+      format: FixtureFormat.zip,
     );
+  }
+
+  /// Parse S57 chart file directly (no ZIP extraction needed)
+  Future<S57ParsedData> parseChartFile(String s57FilePath) async {
+    final s57File = File(s57FilePath);
+    if (!s57File.existsSync()) {
+      throw FileSystemException('S57 chart file not found', s57FilePath);
+    }
+
+    final parser = S57Parser(_TestLoggerAdapter());
+    final s57Data = await s57File.readAsBytes();
+    
+    return await parser.parseS57Data(s57Data);
   }
 
   /// Extract S-57 chart data from ZIP archive with timeout
@@ -546,6 +601,9 @@ class EncTestUtilities {
   }
 }
 
+/// Supported fixture formats
+enum FixtureFormat { s57, zip }
+
 /// Result of fixture discovery
 class FixtureDiscoveryResult {
   final String fixturesPath;
@@ -554,6 +612,13 @@ class FixtureDiscoveryResult {
   final String? primaryChartPath;
   final String? secondaryChartPath;
   final bool found;
+  
+  // Enhanced properties for S57 support
+  final bool foundFixtures;
+  final List<String> fixtureFiles;
+  final List<String> encDirectories;
+  final String fixturePath;
+  final FixtureFormat format;
 
   FixtureDiscoveryResult({
     required this.fixturesPath,
@@ -561,13 +626,42 @@ class FixtureDiscoveryResult {
     required this.secondaryChartAvailable,
     this.primaryChartPath,
     this.secondaryChartPath,
-  }) : found = primaryChartAvailable || secondaryChartAvailable;
+    // Enhanced properties
+    bool? foundFixtures,
+    List<String>? fixtureFiles,
+    List<String>? encDirectories, 
+    String? fixturePath,
+    FixtureFormat? format,
+  }) : found = primaryChartAvailable || secondaryChartAvailable,
+       foundFixtures = foundFixtures ?? (primaryChartAvailable || secondaryChartAvailable),
+       fixtureFiles = fixtureFiles ?? [],
+       encDirectories = encDirectories ?? [],
+       fixturePath = fixturePath ?? fixturesPath,
+       format = format ?? FixtureFormat.zip;
+
+  // Enhanced constructor for S57 format
+  FixtureDiscoveryResult.s57({
+    required this.foundFixtures,
+    required this.fixtureFiles,
+    required this.encDirectories,
+    required this.fixturePath,
+    this.format = FixtureFormat.s57,
+  }) : fixturesPath = fixturePath,
+       primaryChartAvailable = fixtureFiles.any((f) => f.contains('US5WA50M')),
+       secondaryChartAvailable = fixtureFiles.any((f) => f.contains('US3WA01M')),
+       primaryChartPath = fixtureFiles.where((f) => f.contains('US5WA50M')).isNotEmpty 
+           ? fixtureFiles.where((f) => f.contains('US5WA50M')).first : null,
+       secondaryChartPath = fixtureFiles.where((f) => f.contains('US3WA01M')).isNotEmpty
+           ? fixtureFiles.where((f) => f.contains('US3WA01M')).first : null,
+       found = foundFixtures;
 
   factory FixtureDiscoveryResult.notFound(String path) {
     return FixtureDiscoveryResult(
       fixturesPath: path,
       primaryChartAvailable: false,
       secondaryChartAvailable: false,
+      foundFixtures: false,
+      fixturePath: path,
     );
   }
 
