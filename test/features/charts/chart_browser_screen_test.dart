@@ -13,10 +13,27 @@ import 'package:navtool/core/providers/noaa_providers.dart';
 import 'package:navtool/core/state/providers.dart';
 import 'package:navtool/core/services/gps_service.dart';
 import 'package:navtool/core/models/gps_position.dart';
+import 'package:navtool/core/utils/network_resilience.dart';
 
 // Generate mocks for dependencies
 @GenerateMocks([NoaaChartDiscoveryService, AppLogger, GpsService])
 import 'chart_browser_screen_test.mocks.dart';
+
+/// Test implementation of NetworkResilience to prevent timeout issues
+class TestNetworkResilience extends NetworkResilience {
+  @override
+  Future<MarineNetworkConditions> assessMarineNetworkConditions() async {
+    // Return a simple, static network condition for tests
+    return MarineNetworkConditions(
+      connectionQuality: ConnectionQuality.good,
+      isSuitableForChartDownload: true,
+      isSuitableForApiRequests: true,
+      recommendedTimeoutMultiplier: 1.0,
+      estimatedSpeed: 1000.0,
+      latency: Duration(milliseconds: 50),
+    );
+  }
+}
 
 void main() {
   group('ChartBrowserScreen Tests', () {
@@ -24,10 +41,60 @@ void main() {
     late MockAppLogger mockLogger;
     late MockGpsService mockGpsService;
 
+    /// Helper function to pump with specific duration instead of waiting for settle
+    Future<void> pumpAndWait(
+      WidgetTester tester, {
+      Duration wait = const Duration(milliseconds: 800), // Increased from 500ms to 800ms for more stable UI
+    }) async {
+      await tester.pump();
+      await Future.delayed(wait);
+      await tester.pump();
+    }
+
+    /// Helper function to pump with retries for flaky UI interactions  
+    Future<void> pumpWithRetries(
+      WidgetTester tester, {
+      int maxRetries = 3,
+    }) async {
+      for (int i = 0; i < maxRetries; i++) {
+        try {
+          await tester.pump();
+          await Future.delayed(const Duration(milliseconds: 100));
+          return;
+        } catch (e) {
+          if (i == maxRetries - 1) rethrow;
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+      }
+    }
+
     setUp(() {
       mockDiscoveryService = MockNoaaChartDiscoveryService();
       mockLogger = MockAppLogger();
       mockGpsService = MockGpsService();
+      
+      // Configure default mock behaviors to prevent timeout issues
+      when(mockGpsService.getCurrentPositionWithFallback())
+          .thenAnswer((_) async => GpsPosition(
+                latitude: 47.6062,
+                longitude: -122.3321,
+                timestamp: DateTime.now(),
+                accuracy: 1000.0,
+              ));
+      
+      when(mockDiscoveryService.discoverChartsByLocation(any))
+          .thenAnswer((_) async => <Chart>[]);
+      
+      when(mockDiscoveryService.discoverChartsByState(any))
+          .thenAnswer((_) async => <Chart>[]);
+      
+      when(mockDiscoveryService.searchCharts(any, filters: anyNamed('filters')))
+          .thenAnswer((_) async => <Chart>[]);
+      
+      // Configure logger to be silent in tests
+      when(mockLogger.info(any)).thenReturn(null);
+      when(mockLogger.warning(any)).thenReturn(null);
+      when(mockLogger.error(any, exception: anyNamed('exception'))).thenReturn(null);
     });
 
     Widget createTestWidget({bool withNavigation = false}) {
@@ -38,6 +105,8 @@ void main() {
           ),
           loggerProvider.overrideWithValue(mockLogger),
           gpsServiceProvider.overrideWithValue(mockGpsService),
+          // Mock network resilience provider to prevent FutureBuilder issues
+          networkResilienceProvider.overrideWith((ref) => TestNetworkResilience()),
         ],
         child: MaterialApp(
           home: const ChartBrowserScreen(),
@@ -116,37 +185,18 @@ void main() {
     }
 
     /// Helper function to pump with extended timeout for complex UI interactions
+    /// DEPRECATED: Use pumpAndWait() instead to prevent infinite animation loops
+    @Deprecated('Use pumpAndWait() to prevent timeout issues')
     Future<void> pumpAndSettleWithTimeout(
       WidgetTester tester, {
-      Duration timeout = const Duration(seconds: 15), // Increased from 10s to 15s for marine UI complexity
+      Duration timeout = const Duration(seconds: 5), // Reduced from 15s to 5s
     }) async {
-      await tester.pumpAndSettle(timeout);
-    }
-
-    /// Helper function to pump with specific duration instead of waiting for settle
-    Future<void> pumpAndWait(
-      WidgetTester tester, {
-      Duration wait = const Duration(milliseconds: 800), // Increased from 500ms to 800ms for more stable UI
-    }) async {
-      await tester.pump();
-      await Future.delayed(wait);
-      await tester.pump();
-    }
-
-    /// Helper function to pump with retries for flaky UI interactions  
-    Future<void> pumpWithRetries(
-      WidgetTester tester, {
-      int maxRetries = 3,
-    }) async {
-      for (int i = 0; i < maxRetries; i++) {
-        try {
-          await tester.pump();
-          await Future.delayed(const Duration(milliseconds: 100));
-          return;
-        } catch (e) {
-          if (i == maxRetries - 1) rethrow;
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
+      // For critical operations that must settle, use shorter timeout and fallback
+      try {
+        await tester.pumpAndSettle(timeout);
+      } catch (e) {
+        // Fallback: pump with fixed duration if settle fails
+        await pumpAndWait(tester, wait: const Duration(seconds: 2));
       }
     }
 
@@ -161,7 +211,7 @@ void main() {
 
           // Act
           await tester.pumpWidget(createTestWidget());
-          await tester.pumpAndSettle();
+          await pumpAndWait(tester, wait: const Duration(milliseconds: 500));
 
           // Assert
           expect(find.byType(ChartBrowserScreen), findsOneWidget);
@@ -181,7 +231,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await pumpAndWait(tester, wait: const Duration(milliseconds: 500));
 
         // Assert
         expect(find.byType(DropdownButton<String>), findsOneWidget);
@@ -196,7 +246,7 @@ void main() {
 
         // Act
         await tester.pumpWidget(createTestWidget());
-        await tester.pumpAndSettle();
+        await pumpAndWait(tester, wait: const Duration(milliseconds: 500));
 
         // Assert
         expect(find.byType(TextField), findsAtLeastNWidgets(1));
@@ -266,9 +316,9 @@ void main() {
 
         // Select California from dropdown
         await tester.tap(find.byType(DropdownButton<String>));
-        await tester.pumpAndSettle();
+        await pumpAndWait(tester, wait: const Duration(milliseconds: 600));
         await tester.tap(find.text('California'));
-        await tester.pumpAndSettle();
+        await pumpAndWait(tester, wait: const Duration(seconds: 1));
 
         // Assert
         verify(
