@@ -3,10 +3,52 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:navtool/core/adapters/s57_to_maritime_adapter.dart';
 import 'package:navtool/core/models/chart_models.dart';
 import 'package:navtool/core/services/s57/s57_models.dart';
+import 'package:navtool/core/services/s57/s57_parser.dart';
+import '../../utils/s57_test_fixtures.dart';
 
 void main() {
   group('S57ToMaritimeAdapter', () {
-    group('convertFeatures', () {
+    group('Real S57 Data Conversion Tests', () {
+      test('should convert real Elliott Bay S57 features to maritime format', () async {
+        // Check fixture availability
+        final available = await S57TestFixtures.areFixturesAvailable();
+        if (!available) {
+          return markTestSkipped('S57 fixtures not available');
+        }
+
+        // Load and parse real Elliott Bay chart
+        final chartData = await S57TestFixtures.loadElliottBayChartBytes();
+        final s57ParsedData = S57Parser.parse(chartData.toList());
+        
+        expect(s57ParsedData.features, isNotEmpty,
+          reason: 'Elliott Bay chart should have S57 features');
+        
+        // Convert real S57 features to maritime features
+        final maritimeFeatures = S57ToMaritimeAdapter.convertFeatures(s57ParsedData.features);
+        
+        expect(maritimeFeatures, isNotEmpty,
+          reason: 'Should convert some S57 features to maritime format');
+        expect(maritimeFeatures.length, lessThanOrEqualTo(s57ParsedData.features.length),
+          reason: 'Maritime features should not exceed S57 features');
+        
+        // Verify maritime features have proper structure
+        for (final feature in maritimeFeatures) {
+          expect(feature.type, isNotNull);
+          expect(feature.id, isNotEmpty);
+          expect(feature.position, isNotNull);
+          expect(feature.attributes, isNotNull);
+          
+          // Verify coordinates are in Elliott Bay area
+          expect(feature.position.latitude, inInclusiveRange(47.0, 48.0));
+          expect(feature.position.longitude, inInclusiveRange(-123.0, -122.0));
+        }
+        
+        // Log conversion statistics
+        print('Real S57 Conversion: ${s57ParsedData.features.length} S57 → ${maritimeFeatures.length} maritime features');
+      });
+    });
+
+    group('Synthetic S57 Data Conversion Tests', () {
       test('should convert empty list to empty list', () {
         final result = S57ToMaritimeAdapter.convertFeatures([]);
         expect(result, isEmpty);

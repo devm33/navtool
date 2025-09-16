@@ -2,9 +2,55 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:navtool/core/services/s57/s57_models.dart';
 import 'package:navtool/core/services/s57/s57_object_catalog.dart';
 import 'package:navtool/core/services/s57/s57_feature_builder.dart';
+import 'package:navtool/core/services/s57/s57_parser.dart';
+import '../../../utils/s57_test_fixtures.dart';
 
 void main() {
   group('S57FeatureBuilder', () {
+    group('Real Data Feature Building Tests', () {
+      test('should build features from real Elliott Bay S57 data', () async {
+        // Check fixture availability
+        final available = await S57TestFixtures.areFixturesAvailable();
+        if (!available) {
+          return markTestSkipped('S57 fixtures not available');
+        }
+
+        // Load and parse real Elliott Bay chart
+        final chartData = await S57TestFixtures.loadElliottBayChartBytes();
+        final s57ParsedData = S57Parser.parse(chartData.toList());
+        
+        expect(s57ParsedData.features, isNotEmpty,
+          reason: 'Elliott Bay chart should have S57 features');
+        
+        // Verify that features were properly built with real data
+        for (final feature in s57ParsedData.features) {
+          expect(feature.recordId, isA<int>());
+          expect(feature.featureType, isA<S57FeatureType>());
+          expect(feature.geometryType, isA<S57GeometryType>());
+          expect(feature.coordinates, isNotEmpty,
+            reason: 'Real features should have coordinates');
+          
+          // Verify coordinates are in Elliott Bay area
+          for (final coord in feature.coordinates) {
+            expect(coord.latitude, inInclusiveRange(47.0, 48.0),
+              reason: 'Elliott Bay latitude range');
+            expect(coord.longitude, inInclusiveRange(-123.0, -122.0),
+              reason: 'Elliott Bay longitude range');
+          }
+        }
+        
+        // Check for expected S57 feature types in Elliott Bay
+        final featureTypes = s57ParsedData.features.map((f) => f.featureType).toSet();
+        print('Real S57 Feature Types found: ${featureTypes.map((t) => t.acronym).toList()}');
+        
+        // Should have various marine navigation features
+        expect(featureTypes, isNotEmpty);
+        expect(s57ParsedData.features.length, greaterThan(5),
+          reason: 'Elliott Bay should have multiple real features');
+      });
+    });
+
+    group('Synthetic Data Feature Building Tests', () {
     late S57ObjectCatalog objectCatalog;
     late S57AttributeCatalog attributeCatalog;
     late S57FeatureBuilder builder;

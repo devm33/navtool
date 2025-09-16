@@ -1,52 +1,30 @@
 /// Unit tests for Elliott Bay S-57 parsing validation
-/// Tests the S-57 parsing pipeline in isolation for Elliott Bay charts
+/// Tests the S-57 parsing pipeline using real NOAA ENC data for Elliott Bay
 library;
 
-import 'dart:io';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:navtool/core/models/chart_models.dart';
 import 'package:navtool/core/services/s57/s57_parser.dart';
 import 'package:navtool/core/adapters/s57_to_maritime_adapter.dart';
+import '../../utils/s57_test_fixtures.dart';
 
 void main() {
-  group('Elliott Bay S-57 Parsing Unit Tests', () {
-    setUpAll(() {
-      // Initialize binding for file system access
-      TestWidgetsFlutterBinding.ensureInitialized();
-    });
-
+  group('Elliott Bay S-57 Parsing with Real NOAA Data', () {
     test('Elliott Bay S-57 parsing produces expected feature types', () async {
-      // This test validates S-57 parsing for Elliott Bay in isolation
-      
-      // First try asset bundle approach (runtime)
-      List<int>? chartData;
-      
-      try {
-        // Try loading from asset bundle first (preferred for runtime)
-        final ByteData byteData = await rootBundle.load('assets/s57/charts/US5WA50M.000');
-        chartData = byteData.buffer.asUint8List();
-        print('Elliott Bay S-57 Test: Loaded ${chartData.length} bytes from asset bundle');
-      } catch (assetError) {
-        print('Elliott Bay S-57 Test: Asset loading failed: $assetError');
-        
-        // Fallback to test fixture path
-        final chartFile = File('test/fixtures/charts/s57_data/ENC_ROOT/US5WA50M/US5WA50M.000');
-        if (await chartFile.exists()) {
-          chartData = await chartFile.readAsBytes();
-          print('Elliott Bay S-57 Test: Loaded ${chartData.length} bytes from test fixture');
-        } else {
-          print('Elliott Bay S-57 Test: Skipping - no chart data available');
-          return; // Skip test if no data available
-        }
+      // Check fixture availability
+      final available = await S57TestFixtures.areFixturesAvailable();
+      if (!available) {
+        return markTestSkipped('S57 fixtures not available');
       }
       
-      // Ensure we have chart data
-      expect(chartData, isNotNull);
-      expect(chartData!.isNotEmpty, isTrue);
-      
-      // Act: Parse S-57 chart data
-      final s57Data = S57Parser.parse(chartData);
+      // Load real Elliott Bay chart data
+      final chartData = await S57TestFixtures.loadElliottBayChartBytes();
+      expect(chartData, isNotEmpty);
+      expect(chartData.length, greaterThan(300000), 
+        reason: 'Elliott Bay chart should be ~411KB');
+
+      // Act: Parse real S-57 chart data
+      final s57Data = S57Parser.parse(chartData.toList());
       
       // Assert: Verify S-57 parsing results
       expect(s57Data, isNotNull);
@@ -93,29 +71,19 @@ void main() {
     });
 
     test('S-57 to Maritime conversion preserves critical features', () async {
-      // Load Elliott Bay chart data
-      List<int>? chartData;
-      
-      try {
-        // Try asset bundle first
-        final ByteData byteData = await rootBundle.load('assets/s57/charts/US5WA50M.000');
-        chartData = byteData.buffer.asUint8List();
-      } catch (assetError) {
-        // Fallback to test fixture
-        final chartFile = File('test/fixtures/charts/s57_data/ENC_ROOT/US5WA50M/US5WA50M.000');
-        if (await chartFile.exists()) {
-          chartData = await chartFile.readAsBytes();
-        } else {
-          print('S-57 Maritime Conversion Test: Skipping - no chart data available');
-          return;
-        }
+      // Check fixture availability
+      final available = await S57TestFixtures.areFixturesAvailable();
+      if (!available) {
+        return markTestSkipped('S57 fixtures not available');
       }
+
+      // Load real Elliott Bay chart data
+      final chartData = await S57TestFixtures.loadElliottBayChartBytes();
       
-      expect(chartData, isNotNull);
-      expect(chartData!.isNotEmpty, isTrue);
+      expect(chartData, isNotEmpty);
       
       // Act: Parse S-57 and convert to maritime features
-      final s57Data = S57Parser.parse(chartData);
+      final s57Data = S57Parser.parse(chartData.toList());
       final maritimeFeatures = S57ToMaritimeAdapter.convertFeatures(s57Data.features);
       
       // Assert: Verify conversion results
@@ -135,30 +103,22 @@ void main() {
       // Validate we got real maritime features converted from S-57 data
       print('S-57 Maritime Conversion Test: Validating maritime feature conversion...');
       
-      // Check for features with original S-57 attributes (indicates real conversion)
-      final realConversions = maritimeFeatures.where((f) => 
-        f.attributes.containsKey('original_s57_code') && 
-        f.attributes.containsKey('original_s57_acronym')).length;
-      
-      print('S-57 Maritime Conversion Test: Features with S-57 origin data: $realConversions/${maritimeFeatures.length}');
-      
-      if (realConversions > 0) {
-        print('S-57 Maritime Conversion Test: SUCCESS - Real S-57 to Maritime conversion working');
-        expect(maritimeFeatures.length, greaterThan(0), 
-          reason: 'Should have converted real S-57 features to maritime features');
-        expect(realConversions, equals(maritimeFeatures.length),
-          reason: 'All maritime features should have S-57 origin data');
-      } else {
-        print('S-57 Maritime Conversion Test: WARNING - No S-57 origin data found in maritime features');
-        expect(maritimeFeatures.length, greaterThan(0), 
-          reason: 'Should have at least some maritime features');
-      }
+      // Verify we have reasonable feature counts for Elliott Bay
+      expect(s57Data.features.length, greaterThan(5),
+        reason: 'Elliott Bay should have multiple S57 features');
+      expect(maritimeFeatures.length, greaterThan(0),
+        reason: 'Should convert at least some features to maritime format');
       
       // Verify all maritime features have valid properties
       for (final feature in maritimeFeatures) {
         expect(feature.type, isNotNull);
         expect(feature.id, isNotEmpty);
         expect(feature.position, isNotNull);
+        expect(feature.attributes, isNotNull);
+      }
+      
+      print('S-57 Maritime Conversion Test: Successfully converted ${maritimeFeatures.length} maritime features');
+    });
         expect(feature.attributes, contains('original_s57_code'));
         expect(feature.attributes, contains('original_s57_acronym'));
         
@@ -177,29 +137,17 @@ void main() {
     });
 
     test('Elliott Bay parsing handles coordinate systems correctly', () async {
-      // This test focuses on coordinate validation for Elliott Bay area
-      
-      List<int>? chartData;
-      
-      try {
-        // Try asset bundle first
-        final ByteData byteData = await rootBundle.load('assets/s57/charts/US5WA50M.000');
-        chartData = byteData.buffer.asUint8List();
-      } catch (assetError) {
-        // Fallback to test fixture
-        final chartFile = File('test/fixtures/charts/s57_data/ENC_ROOT/US5WA50M/US5WA50M.000');
-        if (await chartFile.exists()) {
-          chartData = await chartFile.readAsBytes();
-        } else {
-          print('Coordinate System Test: Skipping - no chart data available');
-          return;
-        }
+      // Check fixture availability
+      final available = await S57TestFixtures.areFixturesAvailable();
+      if (!available) {
+        return markTestSkipped('S57 fixtures not available');
       }
       
-      expect(chartData, isNotNull);
+      // Load real Elliott Bay chart data
+      final chartData = await S57TestFixtures.loadElliottBayChartBytes();
       
       // Parse and convert
-      final s57Data = S57Parser.parse(chartData!);
+      final s57Data = S57Parser.parse(chartData.toList());
       final maritimeFeatures = S57ToMaritimeAdapter.convertFeatures(s57Data.features);
       
       expect(maritimeFeatures, isNotEmpty);

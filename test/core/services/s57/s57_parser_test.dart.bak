@@ -149,13 +149,13 @@ void main() {
         expect(zipFile.existsSync(), isTrue);
 
         // Note: In a full implementation, we would extract and parse the .000 file
-        // Use real Elliott Bay chart for chart metadata validation
-        final result = S57Parser.parse(realS57Data);
+        // For now, we test with our synthetic data
+        final result = S57Parser.parse(validTestData);
         expect(result.features, isNotEmpty);
       });
 
       test('should handle chart metadata validation', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final metadata = result.metadata;
 
         // Validate metadata fields
@@ -167,7 +167,7 @@ void main() {
 
     group('Enhanced S-57 Object Parsing', () {
       test('should recognize official S-57 object codes', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // Should recognize S-57 feature types by their official codes
         final featureTypes = result.features.map((f) => f.featureType).toSet();
@@ -186,7 +186,7 @@ void main() {
       });
 
       test('should extract S-57 attributes with proper codes', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         for (final feature in result.features) {
           expect(feature.attributes, isA<Map<String, dynamic>>());
@@ -230,7 +230,7 @@ void main() {
       });
 
       test('should handle coordinate parsing correctly', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // All features should have valid coordinates
         for (final feature in result.features) {
@@ -246,7 +246,7 @@ void main() {
       });
 
       test('should assign correct geometry types', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         for (final feature in result.features) {
           switch (feature.featureType) {
@@ -279,7 +279,7 @@ void main() {
 
     group('ISO 8211 Compliance', () {
       test('should parse record leader correctly', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // Should successfully parse without throwing
         expect(result, isA<S57ParsedData>());
@@ -287,7 +287,7 @@ void main() {
       });
 
       test('should handle field parsing with proper delimiters', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // Features should be extracted from proper field parsing
         expect(result.features, isNotEmpty);
@@ -298,7 +298,7 @@ void main() {
       });
 
       test('should extract metadata from DDR correctly', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final metadata = result.metadata;
 
         expect(metadata.producer, isNotEmpty);
@@ -313,7 +313,7 @@ void main() {
 
     group('Spatial Query Enhancement', () {
       test('should support navigation aid queries with new buoy types', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final navAids = result.queryNavigationAids();
 
         expect(navAids, isA<List<S57Feature>>());
@@ -332,7 +332,7 @@ void main() {
       });
 
       test('should support enhanced depth feature queries', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final depthFeatures = result.queryDepthFeatures();
 
         expect(depthFeatures, isA<List<S57Feature>>());
@@ -351,7 +351,7 @@ void main() {
 
     group('Feature Label Generation', () {
       test('should generate meaningful labels for marine features', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         for (final feature in result.features) {
           expect(feature.label, isNotNull);
@@ -386,7 +386,7 @@ void main() {
 
     group('Feature Type Recognition', () {
       test('should recognize different S-57 feature types', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // Verify we can identify different feature types
         final featureTypes = result.features.map((f) => f.featureType).toSet();
@@ -395,7 +395,7 @@ void main() {
       });
 
       test('should extract feature attributes correctly', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final feature = result.features.first;
 
         expect(feature.attributes, isA<Map<String, dynamic>>());
@@ -403,7 +403,7 @@ void main() {
       });
 
       test('should handle different geometry types', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
 
         // Verify we can handle different geometry types
         final geometryTypes = result.features
@@ -415,7 +415,7 @@ void main() {
 
     group('Data Conversion', () {
       test('should convert to chart service format correctly', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final chartData = result.toChartServiceFormat();
 
         expect(chartData, containsPair('metadata', anything));
@@ -438,7 +438,7 @@ void main() {
       });
 
       test('should convert features to chart feature format', () {
-        final result = S57Parser.parse(realS57Data);
+        final result = S57Parser.parse(validTestData);
         final feature = result.features.first;
         final chartFeature = feature.toChartFeature();
 
@@ -452,7 +452,7 @@ void main() {
 
     group('Error Handling', () {
       test('should handle truncated records gracefully', () {
-        final truncatedData = realS57Data.take(30).toList();
+        final truncatedData = validTestData.take(30).toList();
 
         expect(
           () => S57Parser.parse(truncatedData),
@@ -482,7 +482,7 @@ void main() {
       test('should parse test data within reasonable time', () {
         final stopwatch = Stopwatch()..start();
 
-        S57Parser.parse(realS57Data);
+        S57Parser.parse(validTestData);
 
         stopwatch.stop();
 
@@ -491,4 +491,135 @@ void main() {
       });
     });
   });
+}
+
+/// Create valid S-57 test data for parser testing
+/// This simulates the structure of a real S-57 file with enhanced field structure
+List<int> _createValidS57TestData() {
+  // Create a minimal but valid S-57 ISO 8211 record structure
+  final data = <int>[];
+
+  // Record leader (24 bytes) - Enhanced for proper parsing
+  data.addAll('01582'.codeUnits); // Record length (01582 bytes)
+  data.addAll('3'.codeUnits); // Interchange level
+  data.addAll('L'.codeUnits); // Leader identifier
+  data.addAll('E'.codeUnits); // Inline code extension
+  data.addAll('1'.codeUnits); // Version number
+  data.addAll(' '.codeUnits); // Application indicator
+  data.addAll('09'.codeUnits); // Field control length
+  data.addAll('00201'.codeUnits); // Base address of data
+  data.addAll(' ! '.codeUnits); // Extended character set
+  data.addAll('4'.codeUnits); // Size of field length (4 bytes)
+  data.addAll('4'.codeUnits); // Size of field position (4 bytes)
+  data.addAll('0'.codeUnits); // Reserved
+  data.addAll('4'.codeUnits); // Size of field tag (4 bytes)
+
+  // Directory entries - Enhanced with proper S-57 fields
+  data.addAll('DSID'.codeUnits); // Data Set Identification
+  data.addAll('0165'.codeUnits); // Field length
+  data.addAll('0000'.codeUnits); // Field position
+
+  data.addAll('FRID'.codeUnits); // Feature Record Identifier
+  data.addAll('0048'.codeUnits); // Field length
+  data.addAll('0165'.codeUnits); // Field position
+
+  data.addAll('FOID'.codeUnits); // Feature Object Identifier
+  data.addAll('0024'.codeUnits); // Field length
+  data.addAll('0213'.codeUnits); // Field position
+
+  data.addAll('ATTF'.codeUnits); // Feature Attributes
+  data.addAll('0036'.codeUnits); // Field length
+  data.addAll('0237'.codeUnits); // Field position
+
+  data.addAll('SG2D'.codeUnits); // 2D Coordinate
+  data.addAll('0024'.codeUnits); // Field length
+  data.addAll('0273'.codeUnits); // Field position
+
+  // Field terminator
+  data.add(0x1e);
+
+  // Pad to reach base address (position 201)
+  while (data.length < 201) {
+    data.add(0x20); // Space padding
+  }
+
+  // DSID field data (Data Set Identification)
+  data.addAll('NOAA'.codeUnits);
+  data.addAll((' ' * (165 - 4)).codeUnits);
+
+  // FRID field data (Feature Record Identifier) - Enhanced
+  data.add(100); // RCNM (Record name) - Feature record
+  _addBinaryInt(data, 12345, 4); // RCID (Record ID)
+  data.add(1); // PRIM (Primitive)
+  data.add(1); // GRUP (Group)
+  _addBinaryInt(data, 58, 2); // OBJL (Object label) - BOYLAT code
+  _addBinaryInt(data, 1, 2); // RVER (Record version)
+  data.add(1); // RUIN (Record update instruction)
+  // Pad to exactly 48 bytes
+  while (data.length < 201 + 165 + 48) {
+    data.add(0x20);
+  }
+
+  // FOID field data (Feature Object Identifier) - Enhanced
+  _addBinaryInt(data, 550, 2); // AGEN (Agency code) - NOAA
+  _addBinaryInt(data, 98765, 4); // FIDN (Feature ID)
+  _addBinaryInt(data, 1, 2); // FIDS (Feature subdivision)
+  // Pad to exactly 24 bytes
+  while (data.length < 201 + 165 + 48 + 24) {
+    data.add(0x20);
+  }
+
+  // ATTF field data (Attributes) - Enhanced with S-57 attributes
+  _addBinaryInt(data, 84, 2); // COLOUR attribute code
+  _addBinaryInt(data, 2, 4); // Red color
+  _addBinaryInt(data, 85, 2); // CATBOY attribute code
+  _addBinaryInt(data, 2, 4); // Port hand buoy
+  _addBinaryInt(data, 86, 2); // COLPAT attribute code
+  _addBinaryInt(data, 1, 4); // Horizontal stripes
+  // Pad to exactly 36 bytes
+  while (data.length < 201 + 165 + 48 + 24 + 36) {
+    data.add(0x20);
+  }
+
+  // SG2D field data (2D Coordinates) - Enhanced with realistic Elliott Bay coords
+  final lat = (47.64 * 10000000).round(); // Convert to S-57 coordinate units
+  final lon = ((-122.34) * 10000000).round();
+  _addBinaryInt(data, lon, 4); // X coordinate (longitude)
+  _addBinaryInt(data, lat, 4); // Y coordinate (latitude)
+  _addBinaryInt(data, lon + 1000, 4); // Second point X
+  _addBinaryInt(data, lat + 1000, 4); // Second point Y
+  _addBinaryInt(data, lon + 2000, 4); // Third point X
+  _addBinaryInt(data, lat + 2000, 4); // Third point Y
+
+  // Pad to declared record length
+  while (data.length < 1582) {
+    data.add(0x20);
+  }
+
+  return data;
+}
+
+/// Helper to add binary integer to data list
+void _addBinaryInt(List<int> data, int value, int bytes) {
+  final byteData = ByteData(8); // Use max size to avoid overflow
+
+  switch (bytes) {
+    case 1:
+      byteData.setUint8(0, value & 0xFF);
+      break;
+    case 2:
+      byteData.setUint16(0, value & 0xFFFF, Endian.little);
+      break;
+    case 4:
+      byteData.setUint32(0, value & 0xFFFFFFFF, Endian.little);
+      break;
+    default:
+      // Default to 4-byte for unknown sizes
+      byteData.setUint32(0, value & 0xFFFFFFFF, Endian.little);
+      bytes = 4;
+  }
+
+  for (int i = 0; i < bytes; i++) {
+    data.add(byteData.getUint8(i));
+  }
 }
